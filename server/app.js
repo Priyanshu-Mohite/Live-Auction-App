@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 
 // ⚠️ Yahan apne Auction model ka path sahi daalna agar alag folder mein hai
-import Auction from "./models/Auction.js"; 
+import Auction from "./models/Auction.js";
 
 dotenv.config();
 const port = process.env.PORT || 3000;
@@ -16,7 +16,8 @@ const server = createServer(app);
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Atlas Connected Successfully!"))
   .catch((err) => console.log("❌ MongoDB Connection Error: ", err));
 
@@ -40,18 +41,18 @@ io.on("connection", (socket) => {
   // 1. JOIN ROOM
   socket.on("join-room", async (room) => {
     socket.join(room);
-    
+
     try {
       let auctionItem = await Auction.findOne({ roomName: room });
 
       if (!auctionItem) {
-        const auctionEndTime = new Date(Date.now() + 5 * 60 * 1000); 
+        const auctionEndTime = new Date(Date.now() + 5 * 60 * 1000);
         auctionItem = await Auction.create({
           roomName: room,
           highestBid: 0,
           highestBidder: "No one yet",
           endTime: auctionEndTime,
-          bidHistory: [] // 🔥 Naya item hai toh history khali hogi
+          bidHistory: [], // 🔥 Naya item hai toh history khali hogi
         });
       }
 
@@ -60,7 +61,7 @@ io.on("connection", (socket) => {
         highestBid: auctionItem.highestBid,
         highestBidder: auctionItem.highestBidder,
         endTime: auctionItem.endTime,
-        bidHistory: auctionItem.bidHistory, 
+        bidHistory: auctionItem.bidHistory,
       });
 
       socket.to(room).emit("receive-message", `A new bidder joined the room!`);
@@ -74,39 +75,42 @@ io.on("connection", (socket) => {
     const newBid = Number(bidAmount);
 
     try {
-      const auctionItem = await Auction.findOne({ roomName: room });
+      // 🔥 ATOMIC UPDATE: Check aur Update ek saath DB level pe
+      const updatedAuction = await Auction.findOneAndUpdate(
+        {
+          roomName: room,
+          highestBid: { $lt: newBid }, // 👈 Sirf tabhi update kar jab current bid newBid se CHOTI ho
+          endTime: { $gt: new Date() }, // 👈 Auction khatam nahi hona chahiye
+        },
+        {
+          $set: { highestBid: newBid, highestBidder: userName },
+          $push: {
+            bidHistory: { userName, bidAmount: newBid, timestamp: new Date() },
+          },
+        },
+        { new: true }, // Naya data return karega
+      );
 
-      if (auctionItem) {
-        if (new Date() > new Date(auctionItem.endTime)) {
-          socket.emit("bid-error", "Auction has ended!");
-          return; 
-        }
-
-        if (newBid > auctionItem.highestBid) {
-          auctionItem.highestBid = newBid;
-          auctionItem.highestBidder = userName;
-          // 🔥 DB mein naya bid history push kar rahe hain
-          auctionItem.bidHistory.push({ userName, bidAmount: newBid, timestamp: new Date() });
-          await auctionItem.save();
-
-          // 🔥 Yahan bhi bidHistory frontend ko bhej rahe hain sabko dikhane ke liye
-          io.to(room).emit("auction-update", {
-            highestBid: auctionItem.highestBid,
-            highestBidder: auctionItem.highestBidder,
-            endTime: auctionItem.endTime,
-            bidHistory: auctionItem.bidHistory,
-          });
-
-          io.to(room).emit("receive-message", `🔥 ${userName} placed a new highest bid of ₹${newBid}!`);
-        } else {
-          socket.emit("bid-error", "Your bid must be higher than the current highest bid.");
-        }
+      if (updatedAuction) {
+        // Success! Sabko update bhej do
+        io.to(room).emit("auction-update", {
+          highestBid: updatedAuction.highestBid,
+          highestBidder: updatedAuction.highestBidder,
+          endTime: updatedAuction.endTime,
+          bidHistory: updatedAuction.bidHistory,
+        });
+        io.to(room).emit(
+          "receive-message",
+          `🔥 ${userName} placed a new highest bid of ₹${newBid}!`,
+        );
+      } else {
+        // Agar update nahi hua, iska matlab kisi aur ne pehle badi bid maar di ya time khatam ho gaya
+        socket.emit("bid-error", "Bid too low or auction ended!");
       }
     } catch (error) {
-      console.log("DB Error:", error);
+      console.log("Concurrency Error:", error);
     }
   });
-
   socket.on("disconnect", () => console.log("User disconnected", socket.id));
 });
 
