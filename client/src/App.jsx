@@ -6,7 +6,7 @@ import {
 } from "@mui/material";
 
 const App = () => {
-  const socket = useMemo(() => io("http://localhost:3000"), []);
+  const socket = useMemo(() => io("https://live-auction-app-6u10.onrender.com/"), []);
 
   const [userName, setUserName] = useState("");
   const [roomName, setRoomName] = useState("");
