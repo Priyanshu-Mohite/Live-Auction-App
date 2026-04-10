@@ -5,11 +5,13 @@ import { createServer } from "http";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
+app.use(express.json());
+
 // ⚠️ Yahan apne Auction model ka path sahi daalna agar alag folder mein hai
 import Auction from "./models/Auction.js"; 
 
 dotenv.config();
-const port = 3000;
+const port = process.env.PORT || 3000;
 const app = express();
 const server = createServer(app);
 
